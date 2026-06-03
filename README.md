@@ -3,9 +3,15 @@ name: flue-framework
 description: Flue Agent Framework v0.9.1+ — TypeScript harness-driven agent framework. Covers createAgent, init, defineTool, defineAgentProfile, routing, SSE streaming, production deployment, and all known pitfalls.
 ---
 
+
+
 # Flue Framework Skill
 
 Flue is a TypeScript framework for building AI agents using the harness-driven architecture. This skill provides comprehensive guidance for creating, developing, and deploying Flue agents (tested with v0.9.1).
+
+## 介绍怎样使用，很简单：
+
+❯ 请先阅读文章Astro-flue简要.txt，新需求为利用skill: flue-framework 创建一个完整的 针对 skill:tikhub-api-helper （替换成你的skill）的社交网络信息搜索agent， 请你先给我具体方案
 
 ## Quick Start
 
