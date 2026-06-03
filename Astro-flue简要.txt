@@ -1,0 +1,164 @@
+Astro 把 Claude Code 那套东西做成了一个纯 TypeScript 框架开源了
+Flue Agent Harness 纯 TypeScript 框架
+Flue Agent Harness 纯 TypeScript 框架
+做 Astro 的那帮人，最近把手伸到了 Agent 领域。
+
+由 Astro 作者 Fred K. Schott 牵头，withastro 组织下悄悄上线了一个新仓库 Flue，定位写得很直接：The Agent Harness Framework，Agent 脚手架框架。开源没多久，star 已经爬到三千八百多。
+
+如果你用过 Claude Code，那它的卖点一句话就能说明白：把 Claude Code 里那套东西做成一个纯 TypeScript 的框架，但完全 headless，没有终端界面，没有图形界面，全程用代码驱动。对每天写 Node.js 和 TypeScript 的人来说，这可能是今年最值得关注的一个 Agent 项目。
+
+图片
+Agent = Model + Harness
+先聊一个概念，harness。
+
+Flue 官网把 Agent 拆成了一个等式：Agent = Model + Harness。模型负责出 token、调工具、理解 prompt，但光有模型跑不起来一个能干活的 Agent。真正让它能自主完成任务的，是模型外面那一层壳，也就是 harness。
+
+这层壳里装的东西，你应该都不陌生：
+
+会话（sessions）：让 Agent 在多轮对话和多次事件之间保持上下文
+工具（tools）：让模型能调 API、查数据、改东西
+技能（skills）：把可复用的专业知识打包成 Markdown，按需加载
+指令与记忆：AGENTS.md、长期记忆这些
+沙箱（sandbox）：一个能跑 bash、读写文件、还相对安全的执行环境
+Flue 官网用了一张分层图来表达这个架构，从下到上是模型、harness、沙箱、文件系统。它想说的是：第一代 Agent 是裸调 LLM API，能做聊天机器人和脚本化任务，但也就到此为止了。Claude Code 和 Codex 这类才算真正的 Agent，你给的是一个目标，不是一串预设步骤，然后信任它自己用上下文和工具把活干完。
+
+Flue 做的事，就是把这套"真 Agent 架构"抽出来，变成一个谁都能拿来用的 TypeScript 框架。
+
+它最像的，是 Astro 和 Next.js
+官方反复强调一句话：Flue 不是又一个 AI SDK。
+
+这话值得琢磨。市面上的 AI SDK，比如 Vercel AI SDK，本质是帮你更顺手地调模型、处理流式输出、管理工具调用。Flue 的野心不在这儿。它把自己类比成 Astro 或者 Next.js，只不过服务对象从网页变成了 Agent。
+
+这意味着它是一个 runtime-agnostic（运行时无关）的框架。你写一次 Agent，然后 build 一下，就能部署到不同的地方：
+
+Node.js 服务器
+Cloudflare Workers
+GitHub Actions
+GitLab CI/CD
+写一次，到处部署。这套思路前端工程师太熟了，跟当年同构框架、Edge 部署的逻辑一脉相承。区别只是这次跑的不是页面渲染，而是一个能自主干活的 Agent。
+
+整个框架就两个包，干净利落：
+
+@flue/runtime：运行时，包含 harness、会话、工具、沙箱
+@flue/cli：CLI 和构建工具，提供 flue 命令
+大部分逻辑，其实写在 Markdown 里
+Flue 有个反直觉的设计：真正跑起来的代码非常少，Agent 的大部分"逻辑"都活在 Markdown 文件里，也就是 skills、context 和 AGENTS.md。
+
+来看官方的入门示例，一个最简单的翻译 Agent：
+
+// .flue/workflows/hello-world.ts
+import { createAgent, type FlueContext, type WorkflowRouteHandler } from'@flue/runtime';
+import * as v from'valibot';
+
+exportconst route: WorkflowRouteHandler = async (_c, next) => next();
+
+const translator = createAgent(() => ({ model: 'anthropic/claude-sonnet-4-6' }));
+
+exportasyncfunction run({ init, payload }: FlueContext) {
+const harness = await init(translator);
+const session = await harness.session();
+
+const { data } = await session.prompt(
+    `Translate this to ${payload.language}: "${payload.text}"`,
+    {
+      result: v.object({
+        translation: v.string(),
+        confidence: v.picklist(['low', 'medium', 'high']),
+      }),
+    },
+  );
+
+return data;
+}
+几个细节挺戳 TypeScript 用户的爽点。
+
+模型用 'anthropic/claude-sonnet-4-6' 这种 provider/model 字符串声明，换模型就改个字符串。示例里能看到 openai/gpt-5.5、openrouter/moonshotai/kimi-k2.6 等等，多 provider 是一等公民。
+
+更关键的是那个 result 参数。你传一个 valibot 的 schema 进去，prompt() 返回的 data 就是经过校验的、带类型的结构化数据。这意味着你能拿着 Agent 的输出去做编排、去走分支判断，而不是对着一坨自由文本做正则。对写惯了强类型 TypeScript 的人来说，这种确定性比什么都重要。
+
+默认不开容器，用纯 JS 写的虚拟沙箱
+这是我个人觉得最聪明的一个设计。
+
+给 Agent 配沙箱，最直接的做法是每个 Agent 起一个 Docker 容器，隔离、安全、什么都能跑。但代价也明显：慢、贵、难扩展。要是做一个高并发的线上 Agent，给每个请求拉一个容器，成本根本扛不住。
+
+Flue 的默认选择是虚拟沙箱，背后是 Vercel Labs 的 just-bash，一个用纯 JavaScript 实现的、跑在内存里的 bash 环境。不开容器，Agent 照样能用内置的 grep、glob、read 这些工具在文件系统里搜东西、读内容。官方的说法是，这种虚拟沙箱比给每个 Agent 起真容器要快得多、便宜得多、也好扩展得多，特别适合做高流量、高并发的 Agent。
+
+来看一个客服 Agent 的例子，整个跑在虚拟沙箱里，连容器都不用:
+
+// .flue/workflows/support.ts
+import { createAgent, type FlueContext, type WorkflowRouteHandler } from'@flue/runtime';
+
+exportconst route: WorkflowRouteHandler = async (_c, next) => next();
+
+const support = createAgent(() => ({ model: 'openrouter/moonshotai/kimi-k2.6' }));
+
+exportasyncfunction run({ init, payload }: FlueContext) {
+const harness = await init(support);
+const session = await harness.session();
+
+await session.fs.mkdir('/workspace/articles', { recursive: true });
+await session.fs.writeFile(
+    '/workspace/articles/reset-password.md',
+    '# Reset your password\n\nUse the account settings page to request a password reset email.',
+  );
+
+returnawait session.prompt(
+    `You are a support agent. Search the workspace for articles relevant
+    to this request, then write a helpful response.\n\nCustomer: ${payload.message}`,
+  );
+}
+那需要真实环境怎么办？比如做一个完整的编程 Agent，得有 git、Node.js、浏览器、克隆好的仓库。Flue 给了分层选择：
+
+虚拟沙箱：默认，内存里的 just-bash，最轻最快
+**local()**：直接用宿主机的文件系统和 shell，适合 CI 场景，runner 本身就是隔离边界，gh、git、npm 都在 $PATH 上现成可用
+远程容器：通过 Daytona、E2B 这类连接器拿到真正的 Linux 环境，镜像还能缓存，后续会话秒起
+从内存里的假 bash，到本机 shell，再到远程真容器，按需求逐级加码，这个梯度设计得很务实。
+
+子 Agent、任务委派、还有 MCP
+干重活的 Agent 框架，少不了任务分解和委派。Flue 用 session.task() 跑一个聚焦的一次性子 Agent，它和主 Agent 共享沙箱和文件系统，但有自己独立的消息历史:
+
+const session = await harness.session();
+
+const research = await session.task('Research the auth flow and summarize the key files.', {
+  cwd: '/workspace/project',
+  agent: 'researcher',
+});
+
+const answer = await session.prompt(
+  `Use this research to draft the implementation plan:\n\n${research.text}`,
+);
+你可以用 defineAgentProfile() 预先定义好不同角色的子 Agent，比如一个专门做调研的 researcher，然后让主 Agent 把活派给对的人。这套"多 Agent 协作"的玩法，跟现在主流编码 Agent 里的 subagent 思路是一致的。
+
+MCP 也支持。在可信代码里连上一个远程 MCP server，把它的工具传给 init()，密钥就能放在 env 里，不用塞进 prompt 或者文件系统：
+
+const github = await connectMcpServer('github', {
+  url: 'https://mcp.github.com/mcp',
+  headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}` },
+});
+
+const agent = createAgent(() => ({
+  model: 'anthropic/claude-sonnet-4-6',
+  tools: github.tools,
+}));
+需要说明的是，这一版只支持现代的 streamable HTTP 传输（旧的 SSE 要手动指定），不会自动探测传输方式、不拉本地 stdio 的 MCP server、也不处理 OAuth 回调。还比较克制。
+
+开发体验：一个 CLI 全包
+flue 这个 CLI 把本地开发、CI 触发、构建部署都串起来了，几条命令值得记一下:
+
+flue dev：watch 模式的开发服务器，改完 Agent 重跑 curl 就能看到变化，默认端口 3583（在九宫格键盘上拼出来就是 FLUE）
+flue run：本地构建并跑任意 workflow，CI 或一次性脚本调用很合适
+flue connect：和某个 Agent 实例开一个交互式会话，多轮 prompt 共享内存里的会话状态
+flue build：构建产物到 ./dist，Node 目标会打成单个 .mjs，Cloudflare 目标走 Workers 加 Durable Objects
+会话状态这块也分平台处理：部署到 Cloudflare 时，会话数据用 Durable Objects 托底，跨请求自动持久化，客户几周几个月后回来还能接着聊；跑在 Node.js 上默认存在内存里，要持久化得自己接一个 store。
+
+该不该现在就上手
+先说清楚，Flue 还是实验阶段，今年 2 月才建仓，最新版本 v0.8.1，README 明说 API 可能会变，现在上生产得做好跟着改代码的准备。协议是 Apache-2.0，商用友好。
+
+但它眼前一亮的地方，是把"框架思维"认真带进了 Agent 开发。过去大半年，裸调 API 加一堆胶水代码、或者绑死某个界面迁不动也测不了的 Agent，我们见得太多了。Flue 给的是另一条路：把 harness 当成一等公民，让 Agent 像写网页应用一样可构建、可部署、可测试。
+
+对前端和 Node.js 开发者来说，门槛低得有点意外。createAgent、session、prompt、task 这些 API，读起来跟平时写后端服务差不多。做 Web 框架的人来做 Agent 框架，思路确实不一样，值得盯一盯。
+
+项目地址：https://github.com/withastro/
+
+flue 官网：https://flueframework.com/
+
