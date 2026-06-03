@@ -608,3 +608,6 @@ while (true) {
 
 ### Deployment
 - [Node.js](/docs/ecosystem/deploy/node/) | [Cloudflare](/docs/ecosystem/deploy/cloudflare/) | [Render](/docs/ecosystem/deploy/render/)
+
+## 特别感谢：
+https://linux.do 佬友支持， https://liang.348349.xyz/ 更多agent项目
